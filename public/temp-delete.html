@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>حذف الشكوى</title>
+    <meta charset="UTF-8">
+</head>
+<body>
+    <script>
+        function deleteComplaint() {
+            try {
+                let complaints = JSON.parse(localStorage.getItem('complaints') || '[]')
+                const originalLength = complaints.length
+                complaints = complaints.filter(c => c.id !== '1739526292228')
+                localStorage.setItem('complaints', JSON.stringify(complaints))
+                
+                if (complaints.length < originalLength) {
+                    document.body.innerHTML = '<h2 style="color: green">تم حذف الشكوى بنجاح!</h2>'
+                } else {
+                    document.body.innerHTML = '<h2 style="color: blue">لم يتم العثور على الشكوى</h2>'
+                }
+            } catch (error) {
+                document.body.innerHTML = `<h2 style="color: red">حدث خطأ: ${error.message}</h2>`
+            }
+        }
+
+        // تنفيذ الحذف عند تحميل الصفحة
+        deleteComplaint()
+    </script>
+</body>
+</html>
