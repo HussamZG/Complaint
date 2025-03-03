@@ -30,6 +30,7 @@
     "postcss": "^8.4.35",
     "rollup": "^4.6.1",
     "tailwindcss": "^3.4.17",
+    "terser": "^5.27.2",
     "vite": "^5.0.12"
   },
   "engines": {
