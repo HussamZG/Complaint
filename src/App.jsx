@@ -24,7 +24,7 @@ function App() {
   return (
     <AuthProvider>
       <ThemeProvider>
-        <Router>
+        <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-dark-900 transition-colors duration-200">
             <Navbar />
             <main className="flex-grow pt-16 pb-8">
