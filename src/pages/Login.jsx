@@ -53,9 +53,7 @@ function Login() {
       }
     } catch (error) {
       console.error('Login error:', error)
-      toast.error(error.message === 'Invalid login credentials' 
-        ? 'بيانات الدخول غير صحيحة' 
-        : error.message || 'حدث خطأ أثناء تسجيل الدخول')
+      toast.error(error.message || 'حدث خطأ أثناء تسجيل الدخول')
     } finally {
       setIsLoading(false)
     }
