@@ -1,10 +1,15 @@
 import { Navigate } from 'react-router-dom'
+import { useAuth } from '../contexts/AuthContext'
+import Loading from './Loading'
 
 function PrivateRoute({ children }) {
-  const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true'
-  const userRole = localStorage.getItem('userRole')
+  const { user, loading } = useAuth()
 
-  if (!isAuthenticated || userRole !== 'admin') {
+  if (loading) {
+    return <Loading />
+  }
+
+  if (!user) {
     return <Navigate to="/login" replace />
   }
 

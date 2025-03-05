@@ -1,106 +1,112 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'react-toastify'
+import { supabase } from '../config/supabase'
 import Chat from '../components/Chat'
-import { getComplaintById, addMessage } from '../services/localStorageService'
-import { isValidComplaintId } from '../utils/idGenerator'
 
 function TrackComplaint() {
   const navigate = useNavigate()
   const [trackingNumber, setTrackingNumber] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [complaint, setComplaint] = useState(null)
-  const [complaintId, setComplaintId] = useState('')
   const [messages, setMessages] = useState([])
   const [newMessage, setNewMessage] = useState('')
 
-  // إضافة مؤقت للتحديث التلقائي
-  useEffect(() => {
-    let interval
-    if (complaintId) {
-      interval = setInterval(() => {
-        const updatedComplaint = getComplaintById(complaintId)
-        if (updatedComplaint) {
-          setComplaint(updatedComplaint)
-          setMessages(updatedComplaint.messages || [])
-        }
-      }, 5000) // تحديث كل 5 ثواني
-    }
-    return () => {
-      if (interval) {
-        clearInterval(interval)
-      }
-    }
-  }, [complaintId])
-
-  const handleSubmit = async (e) => {
+  const handleSearch = async (e) => {
     e.preventDefault()
-    if (!trackingNumber.trim()) {
-      toast.error('الرجاء إدخال رقم التتبع')
-      return
-    }
-
-    if (!isValidComplaintId(trackingNumber)) {
-      toast.error('رقم التتبع غير صالح')
-      return
-    }
+    if (!trackingNumber.trim()) return
 
     setIsLoading(true)
-    setComplaintId(trackingNumber)
-
     try {
-      const foundComplaint = getComplaintById(trackingNumber)
-      if (foundComplaint) {
-        setComplaint(foundComplaint)
-        setMessages(foundComplaint.messages || [])
-        toast.success('تم العثور على الشكوى')
+      const { data: complaint, error } = await supabase
+        .from('complaints')
+        .select('*')
+        .eq('id', trackingNumber)
+        .single()
+
+      if (error) throw error
+
+      if (complaint) {
+        setComplaint(complaint)
+        // جلب الرسائل
+        const { data: messages } = await supabase
+          .from('messages')
+          .select('*')
+          .eq('complaint_id', complaint.id)
+          .order('created_at', { ascending: true })
+
+        setMessages(messages || [])
       } else {
         toast.error('لم يتم العثور على الشكوى')
-        setComplaint(null)
-        setMessages([])
       }
     } catch (error) {
-      console.error('Error loading complaint:', error)
-      toast.error('حدث خطأ أثناء البحث عن الشكوى')
+      console.error('Error searching complaint:', error)
+      toast.error('حدث خطأ في البحث عن الشكوى')
     } finally {
       setIsLoading(false)
     }
   }
+
+  useEffect(() => {
+    let channel;
+    
+    const setupRealtimeSubscription = async () => {
+      if (complaint?.id) {
+        // إلغاء الاشتراك السابق إذا وجد
+        if (channel) {
+          await supabase.removeChannel(channel)
+        }
+
+        channel = supabase
+          .channel(`complaint-${complaint.id}`)
+          .on('postgres_changes', {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages',
+            filter: `complaint_id=eq.${complaint.id}`
+          }, payload => {
+            if (payload.new && payload.new.is_admin) {
+              setMessages(prev => [...prev, payload.new])
+            }
+          })
+          .subscribe()
+      }
+    }
+
+    setupRealtimeSubscription()
+
+    // تنظيف عند إزالة المكون
+    return () => {
+      if (channel) {
+        supabase.removeChannel(channel)
+      }
+    }
+  }, [complaint?.id])
 
   const handleAddMessage = async (e) => {
     e.preventDefault()
     if (!newMessage.trim()) return
 
     try {
-      const success = await addMessage(complaint.id, {
-        text: newMessage,
-        isAdmin: false
-      })
+      const { data, error } = await supabase
+        .from('messages')
+        .insert([{
+          complaint_id: complaint.id,
+          content: newMessage,
+          is_admin: false,
+          created_at: new Date().toISOString()
+        }])
+        .select()
+        .single()
 
-      if (success) {
-        setNewMessage('')
-        loadComplaint() // إعادة تحميل الشكوى لتحديث الرسائل
-        toast.success('تم إرسال الرسالة بنجاح')
-      } else {
-        toast.error('حدث خطأ أثناء إرسال الرسالة')
-      }
+      if (error) throw error
+
+      // تحديث الرسائل مباشرة
+      setMessages(prev => [...prev, data])
+      setNewMessage('')
+      toast.success('تم إرسال الرسالة بنجاح')
     } catch (error) {
-      console.error('Error sending message:', error)
-      toast.error('حدث خطأ غير متوقع')
-    }
-  }
-
-  const loadComplaint = () => {
-    if (!complaintId) return
-
-    try {
-      const complaintData = getComplaintById(complaintId)
-      if (complaintData) {
-        setComplaint(complaintData)
-        setMessages(complaintData.messages || [])
-      }
-    } catch (error) {
-      console.error('Error reloading complaint:', error)
+      toast.error('حدث خطأ في إرسال الرسالة')
     }
   }
 
@@ -126,13 +132,19 @@ function TrackComplaint() {
     return status || 'قيد المراجعة'
   }
 
-  const formatDate = (dateString) => {
+  const formatDateTime = (dateString) => {
     const date = new Date(dateString)
-    return date.toLocaleDateString('en-GB', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric'
-    }).replace(/\//g, '/')
+    return {
+      date: date.toLocaleDateString('en-GB', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }),
+      time: date.toLocaleTimeString('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    }
   }
 
   const getComplaintTypeInArabic = (type) => {
@@ -166,7 +178,7 @@ function TrackComplaint() {
         </div>
 
         <div className="bg-white dark:bg-dark-800 py-8 px-4 shadow-lg dark:shadow-dark-700 rounded-xl sm:px-10">
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSearch} className="space-y-6">
             <div>
               <label htmlFor="trackingNumber" className="block text-sm font-medium text-dark-700 dark:text-dark-300">
                 رقم تتبع الشكوى
@@ -235,9 +247,12 @@ function TrackComplaint() {
                     <p className="text-sm font-medium text-dark-500 dark:text-dark-400">
                       تاريخ التقديم
                     </p>
-                    <p className="mt-1 text-sm text-dark-900 dark:text-dark-100">
-                      {formatDate(complaint.date)}
-                    </p>
+                    <div className="mt-2 text-sm text-dark-500 dark:text-dark-400">
+                      <span>تاريخ التقديم: </span>
+                      <time dateTime={complaint?.created_at}>
+                        {formatDateTime(complaint?.created_at).date}
+                      </time>
+                    </div>
                   </div>
                   <div>
                     <p className="text-sm font-medium text-dark-500 dark:text-dark-400">
@@ -250,33 +265,32 @@ function TrackComplaint() {
                   <div>
                     <h3 className="text-lg font-medium mb-4 text-dark-900 dark:text-dark-100">المحادثة</h3>
                     <div className="space-y-4">
-                      {complaint.messages?.map((message, index) => (
+                      {messages.map((message) => (
                         <div
-                          key={index}
-                          className={`flex ${message.isAdmin ? 'justify-start' : 'justify-end'}`}
+                          key={message.id}
+                          className={`p-4 rounded-lg ${
+                            message.is_admin
+                              ? 'bg-primary-50 dark:bg-primary-900/20 mr-0 ml-12'
+                              : 'bg-gray-50 dark:bg-dark-700 ml-0 mr-12'
+                          }`}
                         >
-                          <div 
-                            className={`rounded-lg shadow px-4 py-3 max-w-lg ${
-                              message.isAdmin 
-                                ? message.isSystem
-                                  ? 'bg-gray-100 dark:bg-dark-600'
-                                  : 'bg-white dark:bg-dark-700' 
-                                : 'bg-primary-100 dark:bg-primary-900/30'
-                            }`}
-                          >
-                            <p className={`${
-                              message.isAdmin 
-                                ? message.isSystem
-                                  ? 'text-dark-600 dark:text-dark-400 text-sm'
-                                  : 'text-dark-900 dark:text-dark-100' 
-                                : 'text-dark-800 dark:text-dark-200'
+                          <div className="flex justify-between items-start mb-2">
+                            <span className={`text-sm font-medium ${
+                              message.is_admin 
+                                ? 'text-primary-700 dark:text-primary-300'
+                                : 'text-gray-600 dark:text-gray-300'
                             }`}>
-                              {message.content || message.text}
-                            </p>
-                            <div className="flex justify-between items-center mt-2 text-xs text-dark-500 dark:text-dark-400">
-                              <span>{message.time}</span>
-                              <span className="mr-2">{message.date}</span>
-                            </div>
+                              {message.is_admin ? 'الإدارة' : 'أنت'}
+                            </span>
+                          </div>
+                          <p className="text-gray-900 dark:text-gray-100">{message.content}</p>
+                          <div className="mt-2 flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
+                            <time dateTime={message.created_at}>
+                              {formatDateTime(message.created_at).date}
+                            </time>
+                            <time dateTime={message.created_at}>
+                              {formatDateTime(message.created_at).time}
+                            </time>
                           </div>
                         </div>
                       ))}
